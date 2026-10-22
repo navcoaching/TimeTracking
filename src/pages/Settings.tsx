@@ -6,7 +6,8 @@ import { useToast } from '../components/Toast';
 import { useAllSessions, useProjects, useSettings } from '../hooks';
 import { formatDateTime, formatNumber } from '../lib/format';
 import { backupFilename, downloadText, exportBackup, importBackup, sessionsToCsv, validateBackup, wipeAllData, type ImportMode, type ValidationResult } from '../services/backup';
-import { saveSettings } from '../db/db';
+import { CLOUD_ENABLED, saveSettings } from '../db/db';
+import { CloudSyncCard } from '../components/CloudSyncCard';
 import type { Settings as SettingsT } from '../types';
 
 export function Settings() {
@@ -158,11 +159,18 @@ export function Settings() {
       </div>
 
       <div className="section-title">
+        <h2>المزامنة بين الأجهزة</h2>
+      </div>
+      <CloudSyncCard />
+
+      <div className="section-title">
         <h2>النسخ الاحتياطي</h2>
       </div>
       <div className="card col" style={{ gap: 10 }}>
         <p className="small muted">
-          البيانات محفوظة محليًا على هذا الجهاز فقط (IndexedDB) ولا تتم مزامنتها مع أي جهاز آخر. صدّر نسخة احتياطية بانتظام واحتفظ بها في مكان آمن.
+          {CLOUD_ENABLED
+            ? 'البيانات محفوظة محليًا (IndexedDB) وتُزامن مع حسابك عند تسجيل الدخول. النسخة الاحتياطية تبقى مفيدة كضمان إضافي.'
+            : 'البيانات محفوظة محليًا على هذا الجهاز فقط (IndexedDB) ولا تتم مزامنتها مع أي جهاز آخر. صدّر نسخة احتياطية بانتظام واحتفظ بها في مكان آمن.'}
         </p>
         <div className="small">
           <span className="num">{projects?.length ?? 0}</span> مشروع · <span className="num">{sessions?.length ?? 0}</span> جلسة
@@ -211,7 +219,7 @@ export function Settings() {
       </div>
 
       <p className="xs muted mt-16" style={{ textAlign: 'center' }}>
-        وقتي — الإصدار 1.0.0 · البيانات محلية 100٪
+        وقتي — الإصدار 1.1.0 · {CLOUD_ENABLED ? 'مزامنة سحابية اختيارية' : 'البيانات محلية 100٪'}
       </p>
 
       {pending?.data && (

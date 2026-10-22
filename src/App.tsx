@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { HashRouter, Route, Routes } from 'react-router-dom';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { ActiveTimerBanner } from './components/ActiveTimerBanner';
+import { CloudInteraction } from './components/CloudInteraction';
 import { BottomNav } from './components/Layout';
 import { ConfirmProvider } from './components/Modal';
 import { ToastProvider, useToast } from './components/Toast';
@@ -74,6 +75,7 @@ export default function App() {
             </Routes>
             <ActiveTimerBanner />
             <BottomNav />
+            <CloudInteraction />
           </div>
         </HashRouter>
       </ConfirmProvider>
