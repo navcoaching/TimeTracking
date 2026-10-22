@@ -1,8 +1,9 @@
 import Dexie, { type Table } from 'dexie';
+import dexieCloud from 'dexie-cloud-addon';
 import type { ActiveTimer, Project, Settings, WorkSession } from '../types';
 
 export const DEFAULT_HOURLY_RATE = 250;
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const DEFAULT_TASK_TYPES = ['تصميم', 'برمجة', 'اجتماع', 'تعديلات', 'مراجعة', 'أخرى'];
 
@@ -15,27 +16,50 @@ export const DEFAULT_SETTINGS: Settings = {
   taskTypes: DEFAULT_TASK_TYPES,
 };
 
+/**
+ * Optional cloud sync (Dexie Cloud). When VITE_DEXIE_CLOUD_URL is not set the
+ * app is 100% local — exactly as before. When set, the same local database is
+ * synced to the cloud after the user signs in (email + one-time code).
+ */
+export const CLOUD_URL: string = (import.meta.env?.VITE_DEXIE_CLOUD_URL as string | undefined)?.trim() ?? '';
+export const CLOUD_ENABLED = CLOUD_URL.length > 0;
+
+const STORES = {
+  projects: 'id, name, status, archived, updatedAt, createdAt',
+  sessions: 'id, projectId, startedAt, endedAt, [projectId+startedAt]',
+  settings: 'id',
+  activeTimer: 'id',
+};
+
 export class WaqtiDB extends Dexie {
   projects!: Table<Project, string>;
   sessions!: Table<WorkSession, string>;
   settings!: Table<Settings, string>;
   activeTimer!: Table<ActiveTimer, string>;
 
-  constructor(name = 'waqti-db') {
-    super(name);
+  constructor(name = 'waqti-db', opts: { cloud?: boolean } = {}) {
+    super(name, opts.cloud ? { addons: [dexieCloud] } : {});
     // Version 1 — initial schema.
-    // Future schema changes: add `this.version(2).stores({...}).upgrade(tx => ...)` below;
+    this.version(1).stores(STORES);
+    // Version 2 — same user tables; when the cloud addon is active it appends its own
+    // bookkeeping tables ($syncState, realms, members …) to this version.
     // Dexie applies migrations sequentially and never drops existing data on upgrade.
-    this.version(SCHEMA_VERSION).stores({
-      projects: 'id, name, status, archived, updatedAt, createdAt',
-      sessions: 'id, projectId, startedAt, endedAt, [projectId+startedAt]',
-      settings: 'id',
-      activeTimer: 'id',
-    });
+    this.version(SCHEMA_VERSION).stores(STORES);
+
+    if (opts.cloud && CLOUD_URL) {
+      this.cloud.configure({
+        databaseUrl: CLOUD_URL,
+        requireAuth: false, // app keeps working locally; user signs in from Settings
+        customLoginGui: true, // Arabic login UI rendered by <CloudInteraction/>
+        nameSuffix: false, // keep using the existing local DB so prior data gets synced up
+        tryUseServiceWorker: false,
+        periodicSync: { minInterval: 60_000 },
+      });
+    }
   }
 }
 
-export const db = new WaqtiDB();
+export const db = new WaqtiDB('waqti-db', { cloud: CLOUD_ENABLED });
 
 export function uid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
