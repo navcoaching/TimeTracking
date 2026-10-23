@@ -6,7 +6,8 @@ import { useToast } from '../components/Toast';
 import { useAllSessions, useProjects, useSettings } from '../hooks';
 import { formatDateTime, formatNumber } from '../lib/format';
 import { backupFilename, downloadText, exportBackup, importBackup, sessionsToCsv, validateBackup, wipeAllData, type ImportMode, type ValidationResult } from '../services/backup';
-import { CLOUD_ENABLED, saveSettings } from '../db/db';
+import { CLOUD_ENABLED, db, saveSettings } from '../db/db';
+import { stopAllTimers } from '../services/timer';
 import { CloudSyncCard } from '../components/CloudSyncCard';
 import type { Settings as SettingsT } from '../types';
 
@@ -127,6 +128,37 @@ export function Settings() {
       </div>
 
       <div className="section-title">
+        <h2>المؤقتات</h2>
+      </div>
+      <div className="card">
+        <label className="row between" style={{ cursor: 'pointer' }}>
+          <span className="col" style={{ gap: 2 }}>
+            <span className="bold">السماح بأكثر من مؤقت في الوقت نفسه</span>
+            <span className="help">عند الإيقاف، يُطلب منك إنهاء الجلسة الحالية قبل بدء مشروع آخر.</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.allowConcurrentTimers}
+            onChange={async (e) => {
+              const on = e.target.checked;
+              if (!on) {
+                const open = await db.activeTimer.count();
+                if (open > 1) {
+                  const ok = await confirm({ title: 'إنهاء المؤقتات المفتوحة؟', message: `لديك ${open} مؤقتات مفتوحة. تعطيل الميزة سيُنهيها ويحفظها كجلسات.`, confirmText: 'إنهاء وحفظ' });
+                  if (!ok) return;
+                  await stopAllTimers();
+                }
+              }
+              await saveSettings({ allowConcurrentTimers: on });
+              toast.success(on ? 'تم السماح بالمؤقتات المتزامنة' : 'مؤقت واحد فقط في كل مرة');
+            }}
+            style={{ width: 22, height: 22 }}
+          />
+        </label>
+        <p className="help mt-8">تحذير: المؤقتات المتزامنة تحتسب وقت كل مشروع كاملًا، فقد يتجاوز مجموع الساعات المفوترة الوقت الفعلي.</p>
+      </div>
+
+      <div className="section-title">
         <h2>المظهر</h2>
       </div>
       <div className="card">
@@ -241,10 +273,10 @@ export function Settings() {
               <span className="k">سعر الساعة الافتراضي في النسخة</span>
               <span className="v num">{formatNumber(pending.data.settings.defaultHourlyRate)}</span>
             </div>
-            {pending.data.activeTimer && (
+            {pending.data.activeTimers.length > 0 && (
               <div className="kv">
-                <span className="k">تحتوي على مؤقت مفتوح</span>
-                <span className="v">نعم</span>
+                <span className="k">مؤقتات مفتوحة</span>
+                <span className="v num">{pending.data.activeTimers.length}</span>
               </div>
             )}
           </div>

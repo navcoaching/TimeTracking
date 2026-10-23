@@ -1,6 +1,7 @@
+import Dexie from 'dexie';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WaqtiDB, getSettings, saveSettings } from '../db/db';
-import { ActiveTimerExistsError, getActiveTimer, pauseTimer, resumeTimer, startTimer, stopTimer } from './timer';
+import { ActiveTimerExistsError, getActiveTimer, getActiveTimers, pauseTimer, resumeTimer, startTimer, stopAllTimers, stopTimer } from './timer';
 import { createProject, updateProject, deleteProject } from './projects';
 import { addManualSession, updateSession } from './sessions';
 import { exportBackup, importBackup, validateBackup, sessionsToCsv } from './backup';
@@ -26,15 +27,15 @@ describe('timer service', () => {
     const p = await newProject();
     const t0 = Date.UTC(2026, 0, 5, 9, 0, 0);
     await startTimer({ projectId: p.id, hourlyRate: p.hourlyRate }, db, t0);
-    await pauseTimer(db, t0 + 30 * MIN);
-    await resumeTimer(db, t0 + 60 * MIN); // 30 min paused
-    const s = await stopTimer({ note: 'تصميم' }, db, t0 + 2 * HOUR);
+    await pauseTimer(p.id, db, t0 + 30 * MIN);
+    await resumeTimer(p.id, db, t0 + 60 * MIN); // 30 min paused
+    const s = await stopTimer(p.id, { note: 'تصميم' }, db, t0 + 2 * HOUR);
     expect(s).not.toBeNull();
     expect(s!.durationSeconds).toBe(90 * 60);
     expect(s!.cost).toBe(375);
     expect(s!.pauses).toHaveLength(1);
     expect(s!.source).toBe('timer');
-    expect(await getActiveTimer(db)).toBeUndefined();
+    expect(await getActiveTimer(p.id, db)).toBeUndefined();
     // project auto-moved to active
     expect((await db.projects.get(p.id))!.status).toBe('active');
   });
@@ -43,18 +44,63 @@ describe('timer service', () => {
     const p = await newProject();
     const t0 = Date.UTC(2026, 0, 5, 9, 0, 0);
     await startTimer({ projectId: p.id, hourlyRate: 250 }, db, t0);
-    await pauseTimer(db, t0 + 20 * MIN);
-    const s = await stopTimer({}, db, t0 + 3 * HOUR);
+    await pauseTimer(p.id, db, t0 + 20 * MIN);
+    const s = await stopTimer(p.id, {}, db, t0 + 3 * HOUR);
     expect(s!.durationSeconds).toBe(20 * 60);
   });
 
-  it('refuses to start a second timer app-wide', async () => {
+  it('refuses a second timer when concurrent timers are disabled', async () => {
+    await saveSettings({ allowConcurrentTimers: false }, db);
     const a = await newProject();
     const b = await newProject();
     await startTimer({ projectId: a.id, hourlyRate: 250 }, db);
     await expect(startTimer({ projectId: b.id, hourlyRate: 250 }, db)).rejects.toBeInstanceOf(ActiveTimerExistsError);
-    const t = await getActiveTimer(db);
-    expect(t!.projectId).toBe(a.id);
+    expect((await getActiveTimers(db)).map((t) => t.projectId)).toEqual([a.id]);
+  });
+
+  it('runs timers on several projects at once (default) and bills each independently', async () => {
+    const a = await newProject(250);
+    const b = await newProject(300);
+    const t0 = Date.UTC(2026, 0, 5, 9, 0, 0);
+    await startTimer({ projectId: a.id, hourlyRate: 250 }, db, t0);
+    await startTimer({ projectId: b.id, hourlyRate: 300 }, db, t0 + 10 * MIN);
+    expect(await getActiveTimers(db)).toHaveLength(2);
+    // starting the same project again is idempotent
+    await startTimer({ projectId: a.id, hourlyRate: 250 }, db, t0 + 20 * MIN);
+    expect(await getActiveTimers(db)).toHaveLength(2);
+    // pausing one does not affect the other
+    await pauseTimer(b.id, db, t0 + 30 * MIN);
+    const sa = await stopTimer(a.id, {}, db, t0 + HOUR);
+    expect(sa!.durationSeconds).toBe(3600);
+    expect(sa!.cost).toBe(250);
+    expect(await getActiveTimers(db)).toHaveLength(1);
+    const sb = await stopTimer(b.id, {}, db, t0 + 2 * HOUR);
+    expect(sb!.durationSeconds).toBe(20 * 60); // 10 → 30 min, paused after
+    expect(sb!.cost).toBe(100);
+  });
+
+  it('stopAllTimers saves every open timer', async () => {
+    const a = await newProject();
+    const b = await newProject();
+    const t0 = Date.UTC(2026, 0, 5, 9, 0, 0);
+    await startTimer({ projectId: a.id, hourlyRate: 250 }, db, t0);
+    await startTimer({ projectId: b.id, hourlyRate: 250 }, db, t0);
+    const saved = await stopAllTimers(db, t0 + HOUR);
+    expect(saved).toHaveLength(2);
+    expect(await getActiveTimers(db)).toHaveLength(0);
+  });
+
+  it('migrates a legacy singleton timer (schema 2) to the per-project key', async () => {
+    const legacy = new Dexie(`legacy-${counter}`);
+    legacy.version(2).stores({ projects: 'id', sessions: 'id, projectId', settings: 'id', activeTimer: 'id' });
+    await legacy.table('projects').put({ id: 'pX', name: 'قديم', startDate: '2026-01-01', status: 'active', hourlyRate: 250, archived: false, createdAt: 1, updatedAt: 1 });
+    await legacy.table('activeTimer').put({ id: 'active', projectId: 'pX', startedAt: 1000, status: 'running', pauses: [], hourlyRate: 250 });
+    legacy.close();
+    const upgraded = new WaqtiDB(`legacy-${counter}`);
+    const timers = await getActiveTimers(upgraded);
+    expect(timers).toHaveLength(1);
+    expect(timers[0].id).toBe('pX');
+    expect(await upgraded.activeTimer.get('active')).toBeUndefined();
   });
 
   it('restores a running timer from the database after an app restart', async () => {
@@ -65,10 +111,10 @@ describe('timer service', () => {
     db.close();
     const reopened = new WaqtiDB(db.name);
     await reopened.open();
-    const t = await getActiveTimer(reopened);
+    const t = await getActiveTimer(p.id, reopened);
     expect(t).toBeDefined();
     expect(t!.startedAt).toBe(t0);
-    const s = await stopTimer({}, reopened, t0 + 3.5 * HOUR);
+    const s = await stopTimer(p.id, {}, reopened, t0 + 3.5 * HOUR);
     expect(s!.durationSeconds).toBe(3.5 * 3600);
     expect(s!.cost).toBe(875);
   });
@@ -78,7 +124,7 @@ describe('timer service', () => {
     const t0 = Date.UTC(2026, 0, 5, 9, 0, 0);
     await startTimer({ projectId: p.id, hourlyRate: p.hourlyRate }, db, t0);
     await updateProject(p.id, { hourlyRate: 400 }, {}, db);
-    const s = await stopTimer({}, db, t0 + HOUR);
+    const s = await stopTimer(p.id, {}, db, t0 + HOUR);
     expect(s!.hourlyRate).toBe(250);
     expect(s!.cost).toBe(250);
   });
@@ -197,17 +243,31 @@ describe('persistence & backup', () => {
     expect(v.warnings.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('handles an unfinished (active) timer inside a backup', () => {
-    const v = validateBackup({
+  it('handles unfinished (active) timers inside old and new backups', () => {
+    const old = validateBackup({
       app: 'waqti',
       schemaVersion: 1,
       projects: [{ id: 'a', name: 'ok' }],
       sessions: [],
       activeTimer: { projectId: 'a', startedAt: 1000, status: 'paused' },
     });
-    expect(v.ok).toBe(true);
-    expect(v.data!.activeTimer!.status).toBe('paused');
-    expect(v.data!.activeTimer!.pausedAt).toBeDefined();
+    expect(old.ok).toBe(true);
+    expect(old.data!.activeTimers).toHaveLength(1);
+    expect(old.data!.activeTimers[0].id).toBe('a');
+    expect(old.data!.activeTimers[0].pausedAt).toBeDefined();
+    const fresh = validateBackup({
+      app: 'waqti',
+      schemaVersion: 3,
+      projects: [{ id: 'a', name: 'ok' }, { id: 'b', name: 'ok2' }],
+      sessions: [],
+      activeTimers: [
+        { projectId: 'a', startedAt: 1000, status: 'running' },
+        { projectId: 'b', startedAt: 2000, status: 'running' },
+        { projectId: 'zzz', startedAt: 3000, status: 'running' },
+      ],
+    });
+    expect(fresh.ok).toBe(true);
+    expect(fresh.data!.activeTimers.map((t) => t.id)).toEqual(['a', 'b']);
   });
 
   it('produces Excel-friendly CSV with BOM', async () => {

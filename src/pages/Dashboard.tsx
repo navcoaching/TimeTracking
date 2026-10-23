@@ -3,12 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ClockIcon, FolderIcon, PlayIcon, PlusIcon } from '../components/Icons';
 import { EmptyState, Page } from '../components/Layout';
 import { ProjectForm } from '../components/ProjectForm';
-import { useActiveTimer, useAllSessions, useNow, useProjects, useSettings } from '../hooks';
+import { useActiveTimers, useAllSessions, useNow, useProjects, useSettings } from '../hooks';
 import { calcCost, timerElapsedSeconds } from '../lib/calc';
 import { formatClock, formatDuration, formatHours, formatMoney, formatNumber } from '../lib/format';
 import { STATUS_LABELS } from '../services/projects';
 import { groupByProject, last7Days, periodSummary, projectStats, recentProjects } from '../services/stats';
-import { startTimer } from '../services/timer';
+import { pauseTimer, resumeTimer, startTimer, stopAllTimers, stopTimer } from '../services/timer';
+import { useConfirm } from '../components/Modal';
+import { PauseIcon, StopIcon } from '../components/Icons';
 import { useToast } from '../components/Toast';
 
 const DAY_NAMES = ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
@@ -16,11 +18,12 @@ const DAY_NAMES = ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خم
 export function Dashboard() {
   const projects = useProjects({ includeArchived: true });
   const sessions = useAllSessions();
-  const timer = useActiveTimer();
+  const timers = useActiveTimers();
   const settings = useSettings();
   const toast = useToast();
+  const confirm = useConfirm();
   const nav = useNavigate();
-  const now = useNow(!!timer);
+  const now = useNow(!!timers?.length);
   const [showNew, setShowNew] = useState(false);
   const [quickId, setQuickId] = useState('');
 
@@ -28,27 +31,28 @@ export function Dashboard() {
   const stats = useMemo(() => {
     const s = sessions ?? [];
     const total = projectStats(s);
-    const live = timer ? timerElapsedSeconds(timer, now) : 0;
+    const live = (timers ?? []).reduce((a, x) => a + timerElapsedSeconds(x, now), 0);
+    const liveCost = (timers ?? []).reduce((a, x) => a + calcCost(timerElapsedSeconds(x, now), x.hourlyRate), 0);
     return {
       count: visible.length,
       active: visible.filter((p) => p.status === 'active').length,
       totalSeconds: total.totalSeconds + live,
-      totalCost: Math.round((total.totalCost + (timer ? calcCost(live, timer.hourlyRate) : 0)) * 100) / 100,
+      totalCost: Math.round((total.totalCost + liveCost) * 100) / 100,
       periods: periodSummary(s, now),
       liveSeconds: live,
       week: last7Days(s, now),
     };
-  }, [sessions, visible, timer, now]);
+  }, [sessions, visible, timers, now]);
 
   const byProject = useMemo(() => groupByProject(sessions ?? []), [sessions]);
   const recent = useMemo(() => recentProjects(projects ?? [], sessions ?? [], 5), [projects, sessions]);
-  const timerProject = timer ? projects?.find((p) => p.id === timer.projectId) : undefined;
+  const runningCount = (timers ?? []).filter((x) => x.status === 'running').length;
   const maxSec = Math.max(1, ...stats.week.map((d) => d.seconds));
 
   const quickStart = async () => {
     const p = visible.find((x) => x.id === quickId);
     if (!p) return toast.error('اختر مشروعًا أولًا');
-    if (timer) return nav(`/projects/${p.id}`);
+    if (timers?.some((x) => x.projectId === p.id)) return nav(`/projects/${p.id}`);
     try {
       await startTimer({ projectId: p.id, hourlyRate: p.hourlyRate });
       toast.success('بدأ المؤقت');
@@ -68,28 +72,68 @@ export function Dashboard() {
 
   return (
     <Page title="لوحة التحكم">
-      {timer && (
-        <Link to={`/projects/${timer.projectId}`} className="card" style={{ display: 'block', borderColor: timer.status === 'running' ? 'var(--primary)' : 'var(--warning)', marginBottom: 14 }}>
-          <div className="row between">
-            <div className="col" style={{ gap: 2 }}>
-              <span className="row small bold">
-                <span className={`dot ${timer.status}`} /> {timer.status === 'running' ? 'جلسة مفتوحة الآن' : 'جلسة متوقفة مؤقتًا'}
-              </span>
-              <span className="muted small truncate">{timerProject?.name ?? '…'}</span>
+      {timers && timers.length > 0 && (
+        <div className="section" style={{ marginBottom: 14 }}>
+          {runningCount > 1 && (
+            <div className="card small" style={{ borderColor: 'var(--warning)', marginBottom: 10 }}>
+              <strong>تنبيه:</strong> يعمل <span className="num">{runningCount}</span> مؤقتات في الوقت نفسه. كل مؤقت يحتسب وقته كاملًا، فالساعات المحتسبة ستتجاوز الوقت الفعلي. أوقف ما لا تعمل عليه فعليًا.
             </div>
-            <div className="col" style={{ alignItems: 'flex-end', gap: 0 }}>
-              <span className="num bold" style={{ fontSize: '1.3rem' }}>
-                {formatClock(stats.liveSeconds)}
-              </span>
-              <span className="small" style={{ color: 'var(--primary)', fontWeight: 700 }}>
-                {formatMoney(calcCost(stats.liveSeconds, timer.hourlyRate), { decimals: 2 })}
-              </span>
-            </div>
+          )}
+          <div className="list">
+            {timers.map((tm) => {
+              const p = projects?.find((x) => x.id === tm.projectId);
+              const el = timerElapsedSeconds(tm, now);
+              const running = tm.status === 'running';
+              return (
+                <div key={tm.projectId} className="card row" style={{ borderColor: running ? 'var(--primary)' : 'var(--warning)', padding: 12 }}>
+                  <Link to={`/projects/${tm.projectId}`} className="flex-1 col" style={{ gap: 2 }}>
+                    <span className="row small bold">
+                      <span className={`dot ${tm.status}`} /> {running ? 'جلسة مفتوحة الآن' : 'جلسة متوقفة مؤقتًا'}
+                    </span>
+                    <span className="muted small truncate">{p?.name ?? '…'}</span>
+                    <span className="row" style={{ gap: 10 }}>
+                      <span className="num bold" style={{ fontSize: '1.2rem' }}>
+                        {formatClock(el)}
+                      </span>
+                      <span className="small" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>
+                        {formatMoney(calcCost(el, tm.hourlyRate), { decimals: 2 })}
+                      </span>
+                    </span>
+                  </Link>
+                  <button className={`btn icon ${running ? 'warning' : 'success'}`} aria-label={running ? 'إيقاف مؤقت' : 'استئناف'} onClick={() => (running ? pauseTimer(tm.projectId) : resumeTimer(tm.projectId))}>
+                    {running ? <PauseIcon /> : <PlayIcon />}
+                  </button>
+                  <button
+                    className="btn icon primary"
+                    aria-label="إنهاء الجلسة"
+                    onClick={async () => {
+                      const s = await stopTimer(tm.projectId);
+                      toast.success(s ? `تم حفظ الجلسة: ${formatClock(s.durationSeconds)} — ${formatMoney(s.cost)}` : 'الجلسة أقل من ثانية ولم تُحفظ');
+                    }}
+                  >
+                    <StopIcon />
+                  </button>
+                </div>
+              );
+            })}
           </div>
-        </Link>
+          {timers.length > 1 && (
+            <button
+              className="btn ghost block mt-8"
+              onClick={async () => {
+                const ok = await confirm({ title: 'إنهاء جميع المؤقتات؟', message: `سيتم حفظ ${timers.length} جلسات بأوقاتها الحالية.`, confirmText: 'إنهاء الكل' });
+                if (!ok) return;
+                const saved = await stopAllTimers();
+                toast.success(`تم حفظ ${saved.length} جلسة`);
+              }}
+            >
+              إنهاء جميع المؤقتات
+            </button>
+          )}
+        </div>
       )}
 
-      {visible.length === 0 && !timer ? (
+      {visible.length === 0 && !timers?.length ? (
         <EmptyState
           icon={<FolderIcon />}
           title="ابدأ بإنشاء أول مشروع"
@@ -175,7 +219,7 @@ export function Dashboard() {
                 ))}
             </select>
             <button className="btn success" onClick={quickStart} disabled={!quickId}>
-              <PlayIcon /> {timer ? 'افتح' : 'ابدأ'}
+              <PlayIcon /> {timers?.some((x) => x.projectId === quickId) ? 'افتح' : 'ابدأ'}
             </button>
           </div>
 

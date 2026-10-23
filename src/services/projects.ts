@@ -83,8 +83,7 @@ export async function setArchived(id: string, archived: boolean, database: Waqti
 /** Deletes a project with all of its sessions (and its active timer if any). */
 export async function deleteProject(id: string, database: WaqtiDB = db): Promise<void> {
   await database.transaction('rw', database.projects, database.sessions, database.activeTimer, async () => {
-    const t = await database.activeTimer.get('active');
-    if (t?.projectId === id) await database.activeTimer.delete('active');
+    await database.activeTimer.delete(id);
     await database.sessions.where('projectId').equals(id).delete();
     await database.projects.delete(id);
   });

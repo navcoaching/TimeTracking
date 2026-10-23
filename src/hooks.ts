@@ -27,10 +27,14 @@ export function useSettings(): Settings {
   return s ? { ...DEFAULT_SETTINGS, ...s } : DEFAULT_SETTINGS;
 }
 
-export function useActiveTimer(): ActiveTimer | undefined | null {
-  // undefined = loading, null = none
-  const t = useLiveQuery(async () => (await db.activeTimer.get('active')) ?? null, []);
-  return t;
+/** All open timers (one per project). undefined = loading. */
+export function useActiveTimers(): ActiveTimer[] | undefined {
+  return useLiveQuery(async () => (await db.activeTimer.toArray()).sort((a, b) => a.startedAt - b.startedAt), []);
+}
+
+/** The open timer for one project. undefined = loading, null = none. */
+export function useActiveTimerFor(projectId: string | undefined): ActiveTimer | undefined | null {
+  return useLiveQuery(async () => (projectId ? (await db.activeTimer.get(projectId)) ?? null : null), [projectId]);
 }
 
 export function useProjects(opts: { includeArchived?: boolean } = {}): Project[] | undefined {

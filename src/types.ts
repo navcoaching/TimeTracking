@@ -49,9 +49,12 @@ export interface WorkSession {
 
 export type TimerStatus = 'running' | 'paused';
 
-/** Persisted state of the single active timer (at most one app-wide) */
+/**
+ * Persisted state of an active timer. Keyed by projectId (one timer per project).
+ * Several may exist at once when `Settings.allowConcurrentTimers` is on.
+ */
 export interface ActiveTimer {
-  id: 'active'; // singleton key
+  id: string; // === projectId
   projectId: string;
   startedAt: number;
   status: TimerStatus;
@@ -71,6 +74,8 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark';
   language: 'ar';
   taskTypes: string[];
+  /** Allow timers on several projects at the same time (default: true). */
+  allowConcurrentTimers: boolean;
 }
 
 export interface BackupFile {
@@ -80,5 +85,7 @@ export interface BackupFile {
   projects: Project[];
   sessions: WorkSession[];
   settings: Settings;
-  activeTimer: ActiveTimer | null;
+  /** Backups from schema ≤ 2 carry a single `activeTimer`; newer ones carry `activeTimers`. */
+  activeTimers: ActiveTimer[];
+  activeTimer?: ActiveTimer | null;
 }

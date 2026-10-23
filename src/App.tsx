@@ -7,7 +7,7 @@ import { BottomNav } from './components/Layout';
 import { ConfirmProvider } from './components/Modal';
 import { ToastProvider, useToast } from './components/Toast';
 import { db } from './db/db';
-import { useActiveTimer, useApplyTheme, useSettings } from './hooks';
+import { useActiveTimers, useApplyTheme, useSettings } from './hooks';
 import { formatDateTime } from './lib/format';
 import { Dashboard } from './pages/Dashboard';
 import { ProjectDetail } from './pages/ProjectDetail';
@@ -24,17 +24,22 @@ function ThemeSync() {
 
 /** Tells the user, once per launch, when a session is still open from before. */
 function OpenSessionNotice() {
-  const timer = useActiveTimer();
+  const timers = useActiveTimers();
   const toast = useToast();
   const shown = useRef(false);
   useEffect(() => {
-    if (shown.current || timer === undefined) return;
+    if (shown.current || timers === undefined) return;
     shown.current = true; // decide once per launch
-    if (!timer) return;
+    if (timers.length === 0) return;
+    if (timers.length > 1) {
+      toast.info(`لديك ${timers.length} مؤقتات مفتوحة من جلسة سابقة. راجعها في الرئيسية.`);
+      return;
+    }
+    const timer = timers[0];
     db.projects.get(timer.projectId).then((p) => {
       toast.info(`لديك جلسة ${timer.status === 'paused' ? 'متوقفة مؤقتًا' : 'مفتوحة'} على «${p?.name ?? 'مشروع'}» منذ ${formatDateTime(timer.startedAt)}`);
     });
-  }, [timer, toast]);
+  }, [timers, toast]);
   return null;
 }
 
