@@ -634,6 +634,11 @@ input[type='datetime-local'] {
   gap: 10px;
   margin-top: 16px;
 }
+.timer-actions .btn.lg {
+  font-size: 0.95rem;
+  padding: 0 12px;
+  white-space: nowrap;
+}
 .timer-actions .btn.span {
   grid-column: 1 / -1;
 }

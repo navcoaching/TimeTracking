@@ -69,7 +69,7 @@ export function Dashboard() {
   return (
     <Page title="لوحة التحكم">
       {timer && (
-        <Link to={`/projects/${timer.projectId}`} className="card" style={{ display: 'block', borderColor: timer.status === 'running' ? 'var(--success)' : 'var(--warning)', marginBottom: 14 }}>
+        <Link to={`/projects/${timer.projectId}`} className="card" style={{ display: 'block', borderColor: timer.status === 'running' ? 'var(--primary)' : 'var(--warning)', marginBottom: 14 }}>
           <div className="row between">
             <div className="col" style={{ gap: 2 }}>
               <span className="row small bold">
