@@ -5,11 +5,11 @@ import { normalizeSession } from './sessions';
 const STATUSES: ProjectStatus[] = ['new', 'active', 'paused', 'completed'];
 
 export async function exportBackup(database: WaqtiDB = db): Promise<BackupFile> {
-  const [projects, sessions, settings, activeTimer] = await Promise.all([
+  const [projects, sessions, settings, activeTimers] = await Promise.all([
     database.projects.toArray(),
     database.sessions.toArray(),
     database.settings.get('settings'),
-    database.activeTimer.get('active'),
+    database.activeTimer.toArray(),
   ]);
   return {
     app: 'waqti',
@@ -18,7 +18,7 @@ export async function exportBackup(database: WaqtiDB = db): Promise<BackupFile> 
     projects,
     sessions,
     settings: { ...DEFAULT_SETTINGS, ...(settings ?? {}) },
-    activeTimer: activeTimer ?? null,
+    activeTimers,
   };
 }
 
@@ -138,25 +138,30 @@ export function validateBackup(raw: unknown): ValidationResult {
     defaultHourlyRate: isNum(rs.defaultHourlyRate) && rs.defaultHourlyRate >= 0 ? rs.defaultHourlyRate : DEFAULT_SETTINGS.defaultHourlyRate,
     theme: rs.theme === 'light' || rs.theme === 'dark' ? rs.theme : 'system',
     taskTypes: Array.isArray(rs.taskTypes) ? (rs.taskTypes as unknown[]).filter((t): t is string => typeof t === 'string') : DEFAULT_SETTINGS.taskTypes,
+    allowConcurrentTimers: typeof rs.allowConcurrentTimers === 'boolean' ? rs.allowConcurrentTimers : DEFAULT_SETTINGS.allowConcurrentTimers,
   };
 
-  let activeTimer: ActiveTimer | null = null;
-  const rt = raw.activeTimer;
-  if (isObj(rt) && typeof rt.projectId === 'string' && ids.has(rt.projectId) && isNum(rt.startedAt)) {
-    activeTimer = {
-      id: 'active',
-      projectId: rt.projectId,
-      startedAt: rt.startedAt,
-      status: rt.status === 'paused' ? 'paused' : 'running',
-      pauses: Array.isArray(rt.pauses) ? (rt.pauses as unknown[]).filter((p): p is { start: number; end: number } => isObj(p) && isNum(p.start) && isNum(p.end)) : [],
-      pausedAt: isNum(rt.pausedAt) ? rt.pausedAt : undefined,
-      note: typeof rt.note === 'string' ? rt.note : undefined,
-      taskType: typeof rt.taskType === 'string' ? rt.taskType : undefined,
-      hourlyRate: isNum(rt.hourlyRate) ? rt.hourlyRate : settings.defaultHourlyRate,
-    };
-    if (activeTimer.status === 'paused' && activeTimer.pausedAt === undefined) activeTimer.pausedAt = Date.now();
-  } else if (rt != null) {
-    warnings.push('تم تجاوز مؤقت نشط غير صالح في النسخة الاحتياطية');
+  // Active timers: schema ≥ 3 stores `activeTimers[]`; older backups a single `activeTimer`.
+  const rawTimers: unknown[] = Array.isArray(raw.activeTimers) ? raw.activeTimers : raw.activeTimer != null ? [raw.activeTimer] : [];
+  const activeTimers: ActiveTimer[] = [];
+  for (const rt of rawTimers) {
+    if (isObj(rt) && typeof rt.projectId === 'string' && ids.has(rt.projectId) && isNum(rt.startedAt) && !activeTimers.some((t) => t.projectId === rt.projectId)) {
+      const t: ActiveTimer = {
+        id: rt.projectId,
+        projectId: rt.projectId,
+        startedAt: rt.startedAt,
+        status: rt.status === 'paused' ? 'paused' : 'running',
+        pauses: Array.isArray(rt.pauses) ? (rt.pauses as unknown[]).filter((p): p is { start: number; end: number } => isObj(p) && isNum(p.start) && isNum(p.end)) : [],
+        pausedAt: isNum(rt.pausedAt) ? rt.pausedAt : undefined,
+        note: typeof rt.note === 'string' ? rt.note : undefined,
+        taskType: typeof rt.taskType === 'string' ? rt.taskType : undefined,
+        hourlyRate: isNum(rt.hourlyRate) ? rt.hourlyRate : settings.defaultHourlyRate,
+      };
+      if (t.status === 'paused' && t.pausedAt === undefined) t.pausedAt = Date.now();
+      activeTimers.push(t);
+    } else {
+      warnings.push('تم تجاوز مؤقت نشط غير صالح في النسخة الاحتياطية');
+    }
   }
 
   return {
@@ -170,7 +175,7 @@ export function validateBackup(raw: unknown): ValidationResult {
       projects,
       sessions,
       settings,
-      activeTimer,
+      activeTimers,
     },
     stats: { projects: projects.length, sessions: sessions.length },
   };
@@ -182,17 +187,19 @@ export type ImportMode = 'replace' | 'merge';
  * Import a validated backup.
  * - replace: wipes current data and restores the backup exactly.
  * - merge: adds/overwrites records by id, keeps everything else; the current
- *   active timer is kept if one exists.
+ *   device's open timers are kept.
  */
 export async function importBackup(data: BackupFile, mode: ImportMode, database: WaqtiDB = db): Promise<void> {
   await database.transaction('rw', database.projects, database.sessions, database.settings, database.activeTimer, async () => {
     if (mode === 'replace') {
       await Promise.all([database.projects.clear(), database.sessions.clear(), database.activeTimer.clear()]);
       await database.settings.put(data.settings);
-      if (data.activeTimer) await database.activeTimer.put(data.activeTimer);
+      await database.activeTimer.bulkPut(data.activeTimers);
     } else {
-      const current = await database.activeTimer.get('active');
-      if (!current && data.activeTimer) await database.activeTimer.put(data.activeTimer);
+      // merge: keep timers already open on this device; add the backup's for other projects
+      const current = await database.activeTimer.toArray();
+      const have = new Set(current.map((t) => t.projectId));
+      await database.activeTimer.bulkPut(data.activeTimers.filter((t) => !have.has(t.projectId)));
     }
     await database.projects.bulkPut(data.projects);
     await database.sessions.bulkPut(data.sessions);

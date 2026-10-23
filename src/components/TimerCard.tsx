@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNow, useSettings } from '../hooks';
+import { useActiveTimers, useNow, useSettings } from '../hooks';
 import { t } from '../i18n';
 import { calcCost, timerElapsedSeconds } from '../lib/calc';
 import { formatClock, formatMoney, formatTime } from '../lib/format';
@@ -11,15 +11,17 @@ import { useToast } from './Toast';
 import { db } from '../db/db';
 
 /**
- * Timer control for a project. Elapsed time is always derived from persisted
- * timestamps (timerElapsedSeconds) — the 1s tick only refreshes the display.
+ * Timer control for a project. `timer` is this project's own open timer (or null).
+ * Elapsed time is always derived from persisted timestamps (timerElapsedSeconds) —
+ * the 1s tick only refreshes the display.
  */
 export function TimerCard({ project, timer }: { project: Project; timer: ActiveTimer | null }) {
   const toast = useToast();
   const confirm = useConfirm();
   const settings = useSettings();
-  const mine = timer?.projectId === project.id ? timer : null;
-  const other = timer && timer.projectId !== project.id ? timer : null;
+  const mine = timer;
+  const others = (useActiveTimers() ?? []).filter((x) => x.projectId !== project.id);
+  const other = !settings.allowConcurrentTimers && others.length ? others[0] : null;
   const now = useNow(!!mine);
   const [note, setNote] = useState(mine?.note ?? '');
   const [taskType, setTaskType] = useState(mine?.taskType ?? '');
@@ -68,7 +70,7 @@ export function TimerCard({ project, timer }: { project: Project; timer: ActiveT
             confirmText: t().timer.conflictConfirm,
           });
           if (!ok) return;
-          await stopTimer();
+          await stopTimer(e.timer.projectId);
           await startTimer({ projectId: project.id, hourlyRate: project.hourlyRate, note: note || undefined, taskType: taskType || undefined });
           toast.success('تم حفظ الجلسة السابقة وبدأ المؤقت');
         } else throw e;
@@ -77,7 +79,7 @@ export function TimerCard({ project, timer }: { project: Project; timer: ActiveT
 
   const onStop = () =>
     run(async () => {
-      const s = await stopTimer({ note: note || undefined, taskType: taskType || undefined });
+      const s = await stopTimer(project.id, { note: note || undefined, taskType: taskType || undefined });
       if (s) toast.success(`${t().timer.saved}: ${formatClock(s.durationSeconds)} — ${formatMoney(s.cost)}`);
       else toast.info('الجلسة أقل من ثانية ولم تُحفظ');
       setNote('');
@@ -88,12 +90,12 @@ export function TimerCard({ project, timer }: { project: Project; timer: ActiveT
     run(async () => {
       const ok = await confirm({ title: 'إلغاء المؤقت دون حفظ؟', message: 'سيتم تجاهل الوقت المنقضي ولن تُسجل جلسة.', confirmText: 'إلغاء المؤقت', danger: true });
       if (!ok) return;
-      await discardTimer();
+      await discardTimer(project.id);
       toast.info(t().timer.discarded);
     });
 
   const persistMeta = (patch: { note?: string; taskType?: string }) => {
-    if (mine) void updateTimerMeta(patch);
+    if (mine) void updateTimerMeta(project.id, patch);
   };
   // Persist the note shortly after typing stops so it survives closing the app mid-session.
   const noteTimer = useRef<number | undefined>(undefined);
@@ -121,7 +123,7 @@ export function TimerCard({ project, timer }: { project: Project; timer: ActiveT
       {other && (
         <div className="card mt-12" style={{ borderColor: 'var(--warning)', textAlign: 'start' }}>
           <p className="small">
-            <strong>تنبيه:</strong> يوجد مؤقت نشط لمشروع آخر. بدء هذا المشروع سيطلب منك إنهاء الجلسة الحالية أولًا.
+            <strong>تنبيه:</strong> يوجد مؤقت نشط لمشروع آخر. بدء هذا المشروع سيطلب منك إنهاء الجلسة الحالية أولًا (يمكنك السماح بمؤقتات متزامنة من الإعدادات).
           </p>
         </div>
       )}
@@ -159,12 +161,12 @@ export function TimerCard({ project, timer }: { project: Project; timer: ActiveT
           </button>
         )}
         {mine && mine.status === 'running' && (
-          <button className="btn warning lg" onClick={() => run(() => pauseTimer())} disabled={busy}>
+          <button className="btn warning lg" onClick={() => run(() => pauseTimer(project.id))} disabled={busy}>
             <PauseIcon /> {t().timer.pause}
           </button>
         )}
         {mine && mine.status === 'paused' && (
-          <button className="btn success lg" onClick={() => run(() => resumeTimer())} disabled={busy}>
+          <button className="btn success lg" onClick={() => run(() => resumeTimer(project.id))} disabled={busy}>
             <PlayIcon /> {t().timer.resume}
           </button>
         )}

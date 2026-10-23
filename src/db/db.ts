@@ -3,7 +3,7 @@ import dexieCloud from 'dexie-cloud-addon';
 import type { ActiveTimer, Project, Settings, WorkSession } from '../types';
 
 export const DEFAULT_HOURLY_RATE = 250;
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const DEFAULT_TASK_TYPES = ['تصميم', 'برمجة', 'اجتماع', 'تعديلات', 'مراجعة', 'أخرى'];
 
@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   language: 'ar',
   taskTypes: DEFAULT_TASK_TYPES,
+  allowConcurrentTimers: true,
 };
 
 /**
@@ -30,6 +31,7 @@ const STORES = {
   settings: 'id',
   activeTimer: 'id',
 };
+const STORES_V3 = { ...STORES, activeTimer: 'id, projectId' };
 
 export class WaqtiDB extends Dexie {
   projects!: Table<Project, string>;
@@ -44,7 +46,19 @@ export class WaqtiDB extends Dexie {
     // Version 2 — same user tables; when the cloud addon is active it appends its own
     // bookkeeping tables ($syncState, realms, members …) to this version.
     // Dexie applies migrations sequentially and never drops existing data on upgrade.
-    this.version(SCHEMA_VERSION).stores(STORES);
+    this.version(2).stores(STORES);
+    // Version 3 — one active timer per project (concurrent timers). The old singleton
+    // record keyed 'active' is re-keyed by its projectId; no data is lost.
+    this.version(SCHEMA_VERSION)
+      .stores(STORES_V3)
+      .upgrade(async (tx) => {
+        const table = tx.table<ActiveTimer, string>('activeTimer');
+        const legacy = await table.get('active');
+        if (legacy) {
+          await table.delete('active');
+          await table.put({ ...legacy, id: legacy.projectId });
+        }
+      });
 
     if (opts.cloud && CLOUD_URL) {
       this.cloud.configure({

@@ -8,7 +8,7 @@ import { SessionForm } from '../components/SessionForm';
 import { SessionItem } from '../components/SessionItem';
 import { TimerCard } from '../components/TimerCard';
 import { useToast } from '../components/Toast';
-import { useActiveTimer, useProject, useProjectSessions } from '../hooks';
+import { useActiveTimerFor, useProject, useProjectSessions } from '../hooks';
 import { formatDate, formatDuration, formatHours, formatMoney } from '../lib/format';
 import { STATUS_LABELS, deleteProject, setArchived } from '../services/projects';
 import { projectStats } from '../services/stats';
@@ -18,7 +18,7 @@ export function ProjectDetail() {
   const { id } = useParams();
   const project = useProject(id);
   const sessions = useProjectSessions(id);
-  const timer = useActiveTimer();
+  const timer = useActiveTimerFor(id);
   const nav = useNavigate();
   const confirm = useConfirm();
   const toast = useToast();
