@@ -6,9 +6,9 @@
   --text: #0f172a;
   --muted: #5b6573;
   --border: #e2e8f0;
-  --primary: #0f766e;
+  --primary: #1d4ed8;
   --primary-contrast: #ffffff;
-  --primary-soft: #d7f0ec;
+  --primary-soft: #dbeafe;
   --accent: #b45309;
   --danger: #b91c1c;
   --danger-soft: #fee2e2;
@@ -26,15 +26,15 @@
 }
 
 :root[data-theme='dark'] {
-  --bg: #0b1220;
-  --surface: #121a2b;
-  --surface-2: #1a2437;
+  --bg: #0a1628;
+  --surface: #111d33;
+  --surface-2: #182742;
   --text: #e5e9f0;
   --muted: #9aa5b5;
-  --border: #243044;
-  --primary: #2dd4bf;
-  --primary-contrast: #06201d;
-  --primary-soft: #11332f;
+  --border: #24365a;
+  --primary: #60a5fa;
+  --primary-contrast: #0b1b3a;
+  --primary-soft: #172554;
   --accent: #fbbf24;
   --danger: #f87171;
   --danger-soft: #3b1518;
@@ -373,7 +373,7 @@ textarea {
   min-height: 56px;
   border-radius: 18px;
   padding: 0 20px;
-  box-shadow: 0 8px 24px rgba(15, 118, 110, 0.35);
+  box-shadow: 0 8px 24px rgba(29, 78, 216, 0.35);
 }
 
 /* Forms */

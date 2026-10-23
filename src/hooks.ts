@@ -63,7 +63,7 @@ export function useApplyTheme(theme: Settings['theme']) {
       const dark = theme === 'dark' || (theme === 'system' && mq.matches);
       document.documentElement.dataset.theme = dark ? 'dark' : 'light';
       const meta = document.querySelector('meta[name="theme-color"]:not([media])') as HTMLMetaElement | null;
-      if (meta) meta.content = dark ? '#0b1220' : '#0f766e';
+      if (meta) meta.content = dark ? '#0a1628' : '#1d4ed8';
     };
     apply();
     mq.addEventListener('change', apply);
