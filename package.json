@@ -13,6 +13,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/alexandria": "^5.1.0",
+    "@fontsource-variable/geist-mono": "^5.1.0",
+    "@fontsource/ibm-plex-sans-arabic": "^5.1.0",
     "dexie": "^4.0.8",
     "dexie-cloud-addon": "^4.0.8",
     "dexie-react-hooks": "^1.1.7",
