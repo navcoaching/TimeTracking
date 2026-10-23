@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { t } from '../i18n';
-import { BackIcon, ChartIcon, FolderIcon, HomeIcon, ListIcon, SettingsIcon } from './Icons';
+import { BackIcon, ChartIcon, FolderIcon, HomeIcon, ListIcon, NavMark, SettingsIcon } from './Icons';
 
 export function Page({
   title,
@@ -22,6 +22,11 @@ export function Page({
           <button className="btn icon ghost" aria-label={t().common.back} onClick={() => (back === true ? nav(-1) : nav(back))}>
             <BackIcon />
           </button>
+        )}
+        {!back && (
+          <span className="brand-mark" aria-hidden>
+            <NavMark />
+          </span>
         )}
         <h1 className="truncate">{title}</h1>
         {actions}

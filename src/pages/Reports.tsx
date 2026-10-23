@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ChartIcon, DownloadIcon, PrintIcon } from '../components/Icons';
+import { ChartIcon, DownloadIcon, NavMark, PrintIcon } from '../components/Icons';
 import { EmptyState, Page } from '../components/Layout';
 import { useToast } from '../components/Toast';
 import { useAllSessions, useProjects } from '../hooks';
@@ -68,11 +68,21 @@ export function Reports() {
 
       {project && (
         <>
-          <div className="print-only" style={{ marginBottom: 16 }}>
-            <h1>تقرير مشروع: {project.name}</h1>
-            <p className="small">
-              {project.client && <>العميل: {project.client} · </>}تاريخ التقرير: {formatDate(Date.now())}
-            </p>
+          <div className="print-only report-head">
+            <div>
+              <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+                <span className="brand-mark">
+                  <NavMark />
+                </span>
+                <span className="brand-word">NAV BUILDS</span>
+              </div>
+              <h1>{project.name}</h1>
+              {project.client && <p className="small muted">العميل: {project.client}</p>}
+            </div>
+            <div className="meta">
+              <div>تقرير ساعات العمل</div>
+              <div className="num">{formatDate(Date.now())}</div>
+            </div>
           </div>
 
           <div className="grid-4">

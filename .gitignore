@@ -4,6 +4,7 @@ dev-dist
 .DS_Store
 *.log
 dist-cloud
+.hallmark/preflight.json
 .env
 .env.*
 !.env.example

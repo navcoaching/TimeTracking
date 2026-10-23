@@ -108,6 +108,13 @@ export const AlertIcon = (p: P) => (
     <path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />
   </svg>
 );
+/** Nav Builds mark — N stroke + signal dot (from navbuilds.net) */
+export const NavMark = (p: P) => (
+  <svg viewBox="0 0 16 16" {...p}>
+    <path d="M3 13V3l10 10V3" fill="none" stroke="currentColor" strokeWidth="2" />
+    <circle cx="13" cy="13" r="1.6" fill="#FF4A1C" />
+  </svg>
+);
 export const SearchIcon = (p: P) => (
   <svg {...base} {...p}>
     <circle cx="11" cy="11" r="7" />
