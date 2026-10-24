@@ -10,3 +10,4 @@ dist-cloud
 !.env.example
 dexie-cloud.json
 dexie-cloud.key
+.taste-skill/
