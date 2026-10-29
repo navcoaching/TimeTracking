@@ -1,0 +1,158 @@
+# الفحص الأمني والتقني الأسبوعي لتطبيق «وقتي»: كل سبت 05:00 بتوقيت الرياض (02:00 UTC) + تشغيل يدوي.
+# قراءة فقط: لا يعدّل الكود ولا ينشر. النتائج في artifact باسم audit-results (90 يوماً)، والتقرير بالبريد إن وُجدت الأسرار.
+#
+# الأسرار (Settings ← Secrets and variables ← Actions)، كلها اختيارية؛ بدونها يُكتب التقرير ولا يُرسل:
+#   RESEND_API_KEY     مفتاح Resend بصلاحية إرسال فقط
+#   REPORT_EMAIL_FROM  مرسل على دومين موثّق في Resend
+#   REPORT_EMAIL_TO    بريد استلام التقرير
+# المتغير الاختياري (Variables): SITE_URL
+name: Weekly Security Audit
+
+on:
+  schedule:
+    - cron: "0 2 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: weekly-security-audit
+  cancel-in-progress: false
+
+env:
+  SITE_URL: ${{ vars.SITE_URL || 'https://businesstracking.netlify.app' }}
+  PROJECT_NAME: وقتي
+  TZ: Asia/Riyadh
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # gitleaks يفحص كل التاريخ
+          persist-credentials: false
+
+      - name: Started
+        run: |
+          mkdir -p results
+          echo "{\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"${{ github.event_name }}\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" > results/meta.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Previous results (for comparison)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list --workflow weekly-security-audit.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId' || true)
+          if [ -n "$id" ] && [ "$id" != "${{ github.run_id }}" ]; then
+            gh run download "$id" -n audit-results -D prev && cp prev/report.json results/previous.json
+          fi
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        id: typecheck
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee results/typecheck.log
+
+      - name: Tests
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee results/test.log
+
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tail -40 | tee results/build.log
+
+      - name: npm audit
+        continue-on-error: true
+        run: npm audit --json > results/npm-audit.json || true
+
+      - name: OSV-Scanner (official release, checksum verified)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p tools && cd tools
+          gh release download --repo google/osv-scanner --pattern 'osv-scanner_linux_amd64' --clobber
+          gh release download --repo google/osv-scanner --pattern '*SHA256SUMS*' --clobber 2>/dev/null || true
+          gh release download --repo google/osv-scanner --pattern '*checksums*' --clobber 2>/dev/null || true
+          cat *SHA256SUMS* *checksums* 2>/dev/null | grep ' osv-scanner_linux_amd64$' > checksum.line
+          test -s checksum.line && sha256sum -c checksum.line
+          chmod +x osv-scanner_linux_amd64 && cd ..
+          ./tools/osv-scanner_linux_amd64 --version | tee results/osv-version.txt
+          ./tools/osv-scanner_linux_amd64 scan --lockfile package-lock.json --format json --output results/osv.json || true
+
+      - name: Gitleaks (official release, checksum verified)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p tools/gitleaks && cd tools/gitleaks
+          gh release download --repo gitleaks/gitleaks --pattern '*linux_x64.tar.gz' --pattern '*checksums.txt' --clobber
+          grep 'linux_x64.tar.gz$' *checksums.txt | sha256sum -c -
+          tar xzf *linux_x64.tar.gz gitleaks && cd ../..
+          ./tools/gitleaks/gitleaks version | tee results/gitleaks-version.txt
+          ./tools/gitleaks/gitleaks git --no-banner --redact --report-format json --report-path results/gitleaks.json . || true
+
+      - name: Live app checks (read-only, rate-limited)
+        continue-on-error: true
+        run: node scripts/audit/live-check.mjs --base "$SITE_URL" --out results/live.json
+
+      - name: OWASP ZAP baseline (passive only)
+        continue-on-error: true
+        run: |
+          docker run --rm -u root -v "$PWD/results:/zap/wrk:rw" -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "$SITE_URL" -J zap.json -I -z "-config spider.maxDuration=2" > results/zap.log 2>&1 || true
+          tail -5 results/zap.log
+
+      - name: Build report (HTML + JSON)
+        if: always()
+        env:
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+        run: node scripts/audit/report.mjs --results results --base "$SITE_URL"
+
+      - name: Send report by email (Resend)
+        if: always()
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
+          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+        run: node scripts/audit/send-email.mjs --results results
+
+      - name: Keep results (90 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-results
+          path: |
+            results/report.html
+            results/report.json
+            results/email.json
+            results/*.log
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Final status
+        if: always()
+        run: node -e 'const r=require("./results/report.json");console.log("status:",r.status,"| findings:",JSON.stringify(r.counts));process.exit(r.status==="failed"?1:0)'
